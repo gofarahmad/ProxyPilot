@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { getAllModemStatuses, ModemStatus } from '@/services/network-service';
 import { sendSms, readSms, sendUssd, SmsMessage } from '@/services/modem-actions-service';
-import { Loader2, Send, MessageSquare, Asterisk, RefreshCw, Smartphone } from 'lucide-react';
+import { Loader2, Send, MessageSquare, Asterisk, RefreshCw, Smartphone, AlertTriangle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function ModemControlPage() {
@@ -37,14 +37,16 @@ export default function ModemControlPage() {
         setIsLoadingModems(true);
         try {
             const modemData = await getAllModemStatuses();
-            const connectedModems = modemData.filter(m => m.status === 'connected');
-            setModems(connectedModems);
-            if (connectedModems.length > 0 && !selectedInterface) {
-                setSelectedInterface(connectedModems[0].interfaceName);
-            } else if (connectedModems.length > 0 && !connectedModems.some(m => m.interfaceName === selectedInterface)) {
+            // Filter only for modems that are managed by mmcli
+            const supportedModems = modemData.filter(m => m.source === 'mmcli_enhanced' && m.status === 'connected');
+            setModems(supportedModems);
+
+            if (supportedModems.length > 0 && !selectedInterface) {
+                setSelectedInterface(supportedModems[0].interfaceName);
+            } else if (supportedModems.length > 0 && !supportedModems.some(m => m.interfaceName === selectedInterface)) {
                 // if the selected modem is no longer available, select the first one
-                setSelectedInterface(connectedModems[0].interfaceName);
-            } else if (connectedModems.length === 0) {
+                setSelectedInterface(supportedModems[0].interfaceName);
+            } else if (supportedModems.length === 0) {
                 setSelectedInterface('');
             }
         } catch (error) {
@@ -134,6 +136,21 @@ export default function ModemControlPage() {
                 title="Modem Actions"
                 description="Send SMS messages and USSD commands directly through your modems."
             />
+            
+            {!isLoadingModems && modems.length === 0 && (
+                 <Card className="mb-6 bg-yellow-400/20 border-yellow-500/50">
+                    <CardHeader className="flex flex-row items-center gap-4 space-y-0">
+                        <AlertTriangle className="h-8 w-8 text-yellow-600"/>
+                        <div>
+                            <CardTitle>Feature Not Available</CardTitle>
+                            <CardDescription className="text-yellow-700/80">
+                                This feature requires a modem to be managed by ModemManager (`mmcli`). No such modems are currently detected.
+                            </CardDescription>
+                        </div>
+                    </CardHeader>
+                </Card>
+            )}
+
             <div className="grid gap-6 md:grid-cols-3">
                 <div className="md:col-span-1">
                     <Card>
@@ -151,7 +168,7 @@ export default function ModemControlPage() {
                                 disabled={modems.length === 0}
                             >
                                 <SelectTrigger>
-                                    <SelectValue placeholder="Select a connected modem" />
+                                    <SelectValue placeholder="Select a supported modem" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {modems.map((modem) => (
@@ -159,7 +176,7 @@ export default function ModemControlPage() {
                                             {modem.name} ({modem.interfaceName})
                                         </SelectItem>
                                     ))}
-                                    {modems.length === 0 && <SelectItem value="no-modems" disabled>No connected modems found</SelectItem>}
+                                    {modems.length === 0 && <SelectItem value="no-modems" disabled>No supported modems found</SelectItem>}
                                 </SelectContent>
                             </Select>
                             )}
@@ -170,8 +187,8 @@ export default function ModemControlPage() {
                 <div className="md:col-span-2">
                     <Tabs defaultValue="sms" className="w-full">
                         <TabsList className="grid w-full grid-cols-2">
-                            <TabsTrigger value="sms"><MessageSquare className="mr-2 h-4 w-4" />SMS</TabsTrigger>
-                            <TabsTrigger value="ussd"><Asterisk className="mr-2 h-4 w-4" />USSD</TabsTrigger>
+                            <TabsTrigger value="sms" disabled={!selectedInterface}><MessageSquare className="mr-2 h-4 w-4" />SMS</TabsTrigger>
+                            <TabsTrigger value="ussd" disabled={!selectedInterface}><Asterisk className="mr-2 h-4 w-4" />USSD</TabsTrigger>
                         </TabsList>
                         
                         {/* SMS Tab */}

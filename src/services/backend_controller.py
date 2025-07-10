@@ -14,12 +14,14 @@ from pathlib import Path
 import shutil
 import datetime
 import re
+import signal
 
 # --- Configuration ---
 # Writable directory in the user's home folder for application state.
 STATE_DIR = Path(os.path.expanduser("~")) / ".proxy_pilot_state"
 STATE_DIR.mkdir(exist_ok=True)
 PROXY_CONFIGS_FILE = STATE_DIR / "proxy_configs.json"
+TUNNEL_PIDS_FILE = STATE_DIR / "tunnel_pids.json"
 LOG_FILE = STATE_DIR / "activity.log"
 LOG_MAX_ENTRIES = 200
 
@@ -27,11 +29,10 @@ LOG_MAX_ENTRIES = 200
 # Writable directory for 3proxy .cfg files.
 THREPROXY_CONFIG_DIR = Path("/etc/3proxy/conf")
 
+
 # Port and credential generation config
 PORT_RANGE_START = 30000
 PORT_RANGE_END = 31000
-USERNAME_LENGTH = 8
-PASSWORD_LENGTH = 12
 
 # --- Logging Helper ---
 def log_message(level, message):
@@ -59,12 +60,9 @@ def log_message(level, message):
 
 # --- Helper Functions ---
 
-def run_command(command_list, use_sudo=True, timeout=15):
+def run_command(command_list, use_sudo=False, timeout=15):
     """Executes a shell command and returns its output or raises an error."""
     try:
-        if use_sudo and shutil.which('sudo') and command_list[0] != 'sudo':
-            command_list.insert(0, 'sudo')
-
         result = subprocess.run(
             command_list,
             check=True,
@@ -81,12 +79,15 @@ def run_command(command_list, use_sudo=True, timeout=15):
         log_message("ERROR", f"Command failed: {' '.join(command_list)}. Error: {error_output}")
         if "couldn't find bearer" in error_output.lower():
             return json.dumps({"bearer_error": True, "message": error_output})
+        # Special handling for vnstat not having data for an interface yet
+        if "unable to read database" in error_output.lower():
+             return json.dumps({"vnstat_error": "not_ready", "message": error_output})
         raise Exception(f"Command failed: {' '.join(command_list)}\nError: {error_output}")
     except FileNotFoundError:
         log_message("ERROR", f"Command not found: {command_list[0]}. Is it installed and in your PATH?")
         raise Exception(f"Command not found: {command_list[0]}. Is it installed and in your PATH?")
 
-def run_and_parse_json(command_list, use_sudo=True, timeout=15):
+def run_and_parse_json(command_list, use_sudo=False, timeout=15):
     """Executes a command and parses its stdout as JSON."""
     raw_output = run_command(command_list, use_sudo, timeout)
     if not raw_output:
@@ -101,23 +102,19 @@ def read_state_file(file_path, default_value={}):
     """Reads a JSON state file."""
     if not file_path.exists():
         return default_value
-    with open(file_path, 'r') as f:
-        try:
+    try:
+        with open(file_path, 'r') as f:
             return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return default_value
+    except (json.JSONDecodeError, IOError, FileNotFoundError):
+        return default_value
 
 def write_state_file(file_path, data):
     """Writes data to a JSON state file."""
     with open(file_path, 'w') as f:
         json.dump(data, f, indent=4)
 
-def generate_random_string(length):
-    """Generates a random alphanumeric string."""
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-
 def get_or_create_proxy_config(interface_name, all_configs):
-    """Gets existing config or creates a new one with an available port and credentials."""
+    """Gets existing config or creates a new one with an available port."""
     if interface_name in all_configs and 'port' in all_configs[interface_name]:
         return all_configs[interface_name], False
 
@@ -130,18 +127,29 @@ def get_or_create_proxy_config(interface_name, all_configs):
 
     new_config = {
         "port": new_port,
-        "username": generate_random_string(USERNAME_LENGTH),
-        "password": generate_random_string(PASSWORD_LENGTH),
+        "username": "", # Start with empty credentials
+        "password": "", # Start with empty credentials
         "type": "3proxy",
-        "bindIp": None
+        "bindIp": None,
+        "customName": None,
     }
     log_message("INFO", f"Generated new proxy config for {interface_name} on port {new_port}.")
     return new_config, True
 
 def generate_3proxy_config_content(config, ip_address):
-    """Generates the content for a 3proxy .cfg file, enabling both SOCKS5 and HTTP."""
-    if not all([config.get('username'), config.get('password'), config.get('port'), ip_address]):
-        return None 
+    """Generates 3proxy config. Supports both authenticated and open modes."""
+    if not ip_address or not config.get('port'):
+        return None
+
+    # Check for non-empty username and password
+    is_authenticated = config.get('username') and config.get('password')
+
+    auth_lines = ""
+    if is_authenticated:
+        auth_lines = f"""
+users {config['username']}:CL:{config['password']}
+allow {config['username']}
+"""
 
     return f"""
 # Dynamically generated by Proxy Pilot for interface with IP {ip_address}
@@ -150,22 +158,16 @@ nserver 8.8.8.8
 nserver 8.8.4.4
 nscache 65536
 timeouts 1 5 30 60 180 1800 15 60
-
-users {config['username']}:CL:{config['password']}
-allow {config['username']}
-
-# SOCKS5 proxy service
-socks -p{config['port']} -i127.0.0.1 -e{ip_address}
-
-# HTTP proxy service on the same port
+{auth_lines}
+# HTTP and SOCKS5 proxy service on the same port
 proxy -p{config['port']} -i127.0.0.1 -e{ip_address}
+socks -p{config['port']} -i127.0.0.1 -e{ip_address}
 """
 
 def write_3proxy_config_file(interface_name, ip_address):
     """Generates and writes the 3proxy config file for a given interface."""
     try:
         THREPROXY_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        
         all_configs = read_state_file(PROXY_CONFIGS_FILE)
         interface_config = all_configs.get(interface_name)
         
@@ -193,17 +195,57 @@ def is_command_available(command):
 
 def get_proxy_status(interface_name):
     """Checks if a 3proxy service for an interface is running."""
-    proxy_status = 'stopped'
-    proxy_type = '3proxy'
     try:
-        service_name = f"{proxy_type}@{interface_name}.service"
-        run_command(['systemctl', 'is-active', '--quiet', service_name], use_sudo=False)
-        proxy_status = 'running'
+        run_command(['systemctl', 'is-active', '--quiet', f"3proxy@{interface_name}.service"])
+        return 'running'
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        proxy_status = 'stopped'
+        return 'stopped'
     except Exception:
-        proxy_status = 'error'
-    return proxy_status
+        return 'error'
+
+def get_bandwidth_stats(interface_name):
+    """Fetches bandwidth usage for a given interface using vnstat."""
+    if not is_command_available("vnstat"):
+        return {"error": "vnstat_not_installed"}
+
+    try:
+        vnstat_output = run_and_parse_json(['vnstat', '-j', '-i', interface_name])
+        
+        # Handle cases where vnstat returns an error object instead of data
+        if vnstat_output.get("vnstat_error") == "not_ready":
+            return {"error": "vnstat_not_ready"}
+
+        if not vnstat_output or 'interfaces' not in vnstat_output or not vnstat_output['interfaces']:
+            return {"error": "no_data"}
+
+        interface_data = vnstat_output['interfaces'][0]
+        total_traffic = interface_data.get('traffic', {}).get('total', {})
+        
+        total_rx = total_traffic.get('rx', 0)
+        total_tx = total_traffic.get('tx', 0)
+        
+        # vnstat provides data in KiB, convert to a human-readable format
+        def format_bytes(kib):
+            if kib is None: return "0 B"
+            # 1 KiB = 1024 bytes
+            b = kib * 1024
+            if b < 1024: return f"{b} B"
+            elif b < 1024**2: return f"{b/1024:.2f} KB"
+            elif b < 1024**3: return f"{b/1024**2:.2f} MB"
+            elif b < 1024**4: return f"{b/1024**3:.2f} GB"
+            else: return f"{b/1024**4:.2f} TB"
+
+        return {
+            "totalRx": format_bytes(total_rx),
+            "totalTx": format_bytes(total_tx),
+        }
+    except Exception as e:
+        # Check if the error is due to vnstat not having data for the interface
+        if "unable to read database" in str(e).lower():
+            log_message("WARN", f"vnstat database for {interface_name} not ready or found.")
+            return {"error": "vnstat_not_ready"}
+        log_message("ERROR", f"Failed to get bandwidth stats for {interface_name}: {e}")
+        return {"error": str(e)}
 
 def get_modems_from_ip_addr():
     """Detects modem-like network interfaces using the 'ip addr' command. This is the primary method."""
@@ -213,7 +255,7 @@ def get_modems_from_ip_addr():
         return modems
 
     try:
-        output = run_command(['ip', '-j', 'addr'], use_sudo=False)
+        output = run_command(['ip', '-j', 'addr'])
         interfaces = json.loads(output)
         
         modem_interface_pattern = re.compile(r'^(enx|usb|wwan|ppp)')
@@ -228,17 +270,17 @@ def get_modems_from_ip_addr():
                         ip_address = addr_info.get('local')
                         break
                 
-                if ip_address:
-                    modems[ifname] = {
-                        "id": iface.get('address', ifname),
-                        "name": f"Net-Modem ({ifname})",
-                        "interfaceName": ifname,
-                        "status": 'connected' if iface.get('operstate') == 'UP' else 'disconnected',
-                        "ipAddress": ip_address,
-                        "proxyType": "3proxy",
-                        "proxyStatus": get_proxy_status(ifname),
-                        "source": "ip_addr"
-                    }
+                modems[ifname] = {
+                    "id": iface.get('address', ifname),
+                    "name": f"Network Modem ({ifname})", # Generic default name
+                    "interfaceName": ifname,
+                    "status": 'connected' if iface.get('operstate') == 'UP' and ip_address else 'disconnected',
+                    "ipAddress": ip_address,
+                    "proxyType": "3proxy",
+                    "proxyStatus": get_proxy_status(ifname),
+                    "source": "ip_addr",
+                    "bandwidth": get_bandwidth_stats(ifname)
+                }
     except Exception as e:
         log_message("ERROR", f"Error detecting modems from 'ip addr': {e}")
     
@@ -251,20 +293,20 @@ def enhance_with_mmcli_data(modems_dict):
         return modems_dict
 
     try:
-        modem_list_data = run_and_parse_json(['mmcli', '-L', '-J'])
+        modem_list_data = run_and_parse_json(['mmcli', '-L', '-J'], use_sudo=True)
         modem_paths = modem_list_data.get('modem-list', [])
 
         for modem_path in modem_paths:
             try:
-                modem_details_data = run_and_parse_json(['mmcli', '-m', modem_path, '-J'])
+                modem_details_data = run_and_parse_json(['mmcli', '-m', modem_path, '-J'], use_sudo=True)
                 modem_info = modem_details_data.get('modem', {})
-                interface_name = modem_info.get('generic', {}).get('primary-port', 'N/A')
+                interface_name = modem_info.get('generic', {}).get('primary-port')
                 
-                if interface_name in modems_dict:
-                    # This modem is already detected, let's enhance it
+                if interface_name and interface_name in modems_dict:
                     device_id = modem_info.get('generic', {}).get('device-identifier', interface_name)
+                    modem_model = modem_info.get('device-properties', {}).get('device.model', f'Modem ({device_id[-4:]})')
                     modems_dict[interface_name]['id'] = device_id
-                    modems_dict[interface_name]['name'] = f"Modem ({device_id[-4:]})"
+                    modems_dict[interface_name]['name'] = modem_model
                     modems_dict[interface_name]['source'] = "mmcli_enhanced"
             except Exception as e:
                 log_message("WARN", f"Could not get details for modem {modem_path}. Error: {e}")
@@ -278,10 +320,7 @@ def enhance_with_mmcli_data(modems_dict):
 def get_all_modem_statuses():
     """Retrieves status of all available modems using a hybrid detection method."""
     try:
-        # Primary detection using network interfaces
         all_modems_dict = get_modems_from_ip_addr()
-        
-        # Optional enhancement with mmcli data
         all_modems_dict = enhance_with_mmcli_data(all_modems_dict)
         
         status_list = list(all_modems_dict.values())
@@ -299,6 +338,9 @@ def get_all_modem_statuses():
             if created:
                 proxy_configs[interface_name] = modem_proxy_config
                 configs_changed = True
+            
+            if proxy_configs.get(interface_name, {}).get('customName'):
+                 modem['name'] = proxy_configs[interface_name]['customName']
             
             current_bind_ip = proxy_configs.get(interface_name, {}).get('bindIp')
             if modem['ipAddress'] and current_bind_ip != modem['ipAddress']:
@@ -347,11 +389,11 @@ def modem_action(action, interface_name, args_json):
         if not is_command_available("mmcli"):
             raise Exception("`mmcli` command not found. This feature requires ModemManager to be installed and managing the modem.")
 
-        modem_list_data = run_and_parse_json(['mmcli', '-L', '-J'])
+        modem_list_data = run_and_parse_json(['mmcli', '-L', '-J'], use_sudo=True)
         modem_mm_path = None
         for modem_path in modem_list_data.get('modem-list', []):
             try:
-                modem_details_data = run_and_parse_json(['mmcli', '-m', modem_path, '-J'])
+                modem_details_data = run_and_parse_json(['mmcli', '-m', modem_path, '-J'], use_sudo=True)
                 if modem_details_data.get('modem', {}).get('generic', {}).get('primary-port') == interface_name:
                     modem_mm_path = modem_path
                     break
@@ -362,21 +404,21 @@ def modem_action(action, interface_name, args_json):
             raise Exception(f"Could not find modem with interface '{interface_name}' managed by ModemManager. This action requires mmcli.")
 
         if action == 'send-sms':
-            create_result = run_and_parse_json(['mmcli', '-m', modem_mm_path, f'--messaging-create-sms=text="{args["message"]}",number="{args["recipient"]}"', '-J'])
+            create_result = run_and_parse_json(['mmcli', '-m', modem_mm_path, f'--messaging-create-sms=text="{args["message"]}",number="{args["recipient"]}"', '-J'], use_sudo=True)
             sms_path = create_result.get('sms', {}).get('path')
             if not sms_path:
                 raise Exception("Failed to create SMS. The modem may be busy or not registered.")
-            run_command(['mmcli', '-s', sms_path, '--send'])
-            run_command(['mmcli', '-m', modem_mm_path, f'--messaging-delete-sms={sms_path.split("/")[-1]}'])
+            run_command(['mmcli', '-s', sms_path, '--send'], use_sudo=True)
+            run_command(['mmcli', '-m', modem_mm_path, f'--messaging-delete-sms={sms_path.split("/")[-1]}'], use_sudo=True)
             log_message("INFO", f"SMS sent to {args['recipient']} via {interface_name}.")
             return {"success": True, "data": {"message": "SMS sent successfully."}}
 
         elif action == 'read-sms':
-            list_result = run_and_parse_json(['mmcli', '-m', modem_mm_path, '--messaging-list-sms', '-J'])
+            list_result = run_and_parse_json(['mmcli', '-m', modem_mm_path, '--messaging-list-sms', '-J'], use_sudo=True)
             sms_paths = list_result.get('modem', {}).get('messaging', {}).get('sms', [])
             messages = []
             for sms_path in sms_paths:
-                sms_details_data = run_and_parse_json(['mmcli', '-s', sms_path, '-J'])
+                sms_details_data = run_and_parse_json(['mmcli', '-s', sms_path, '-J'], use_sudo=True)
                 sms_details = sms_details_data.get('sms', {})
                 content = sms_details.get('content', {})
                 messages.append({
@@ -389,7 +431,7 @@ def modem_action(action, interface_name, args_json):
             return {"success": True, "data": messages}
 
         elif action == 'send-ussd':
-            response_str = run_command(['mmcli', '-m', modem_mm_path, f'--3gpp-ussd-initiate={args["ussdCode"]}'])
+            response_str = run_command(['mmcli', '-m', modem_mm_path, f'--3gpp-ussd-initiate={args["ussdCode"]}'], use_sudo=True)
             log_message("INFO", f"USSD command '{args['ussdCode']}' sent via {interface_name}.")
             return {"success": True, "data": {"response": response_str}}
             
@@ -412,13 +454,12 @@ def rotate_ip(interface_name):
         if not modem_to_rotate or 'mmcli' not in modem_to_rotate.get('source', ''):
             raise Exception(f"IP rotation is only supported for modems managed by ModemManager. {interface_name} is not one of them.")
             
-        modem_id_or_path = modem_to_rotate['id'] # This could be device ID or path
+        modem_id_or_path = modem_to_rotate['id'] 
 
-        # Find the correct modem index for mmcli
-        modem_list_data = run_and_parse_json(['mmcli', '-L', '-J'])
+        modem_list_data = run_and_parse_json(['mmcli', '-L', '-J'], use_sudo=True)
         modem_mm_path = None
         for m_path in modem_list_data.get('modem-list', []):
-             modem_details_data = run_and_parse_json(['mmcli', '-m', m_path, '-J'])
+             modem_details_data = run_and_parse_json(['mmcli', '-m', m_path, '-J'], use_sudo=True)
              if modem_details_data.get('modem', {}).get('generic', {}).get('device-identifier') == modem_id_or_path:
                  modem_mm_path = m_path
                  break
@@ -426,17 +467,17 @@ def rotate_ip(interface_name):
         if not modem_mm_path:
             raise Exception(f"Could not find modem path for device ID {modem_id_or_path}")
 
-        modem_details_data = run_and_parse_json(['mmcli', '-m', modem_mm_path, '-J'])
+        modem_details_data = run_and_parse_json(['mmcli', '-m', modem_mm_path, '-J'], use_sudo=True)
         bearer_path = modem_details_data.get('modem', {}).get('generic', {}).get('bearer', None)
         
         if not bearer_path or bearer_path == "/":
-            run_command(['mmcli', '-m', modem_mm_path, '--simple-connect=any'])
+            run_command(['mmcli', '-m', modem_mm_path, '--simple-connect=any'], use_sudo=True)
         else:
-            run_command(['mmcli', '-b', bearer_path, '--disconnect'], timeout=30)
-            run_command(['sleep', '5'], use_sudo=False, timeout=10)
-            run_command(['mmcli', '-m', modem_mm_path, '--simple-connect=any'], timeout=45)
+            run_command(['mmcli', '-b', bearer_path, '--disconnect'], use_sudo=True, timeout=30)
+            run_command(['sleep', '5'], timeout=10)
+            run_command(['mmcli', '-m', modem_mm_path, '--simple-connect=any'], use_sudo=True, timeout=45)
         
-        run_command(['sleep', '5'], use_sudo=False, timeout=10)
+        run_command(['sleep', '5'], timeout=10)
 
         restart_result = proxy_action('restart', interface_name)
         if not restart_result['success']:
@@ -452,6 +493,148 @@ def rotate_ip(interface_name):
         log_message("ERROR", f"IP rotation for {interface_name} failed: {e}")
         return {"success": False, "error": str(e)}
 
+# --- Tunnel Management ---
+
+def get_tunnel_pids():
+    """Reads the tunnel PID file."""
+    return read_state_file(TUNNEL_PIDS_FILE)
+
+def save_tunnel_pids(pids):
+    """Saves the tunnel PID file."""
+    write_state_file(TUNNEL_PIDS_FILE, pids)
+
+def is_pid_running(pid):
+    """Check if a process with the given PID is running."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    else:
+        return True
+
+def start_tunnel(tunnel_id, local_port, linked_to, tunnel_type, cloudflare_id=None):
+    """Starts a tunnel and saves its PID."""
+    pids = get_tunnel_pids()
+    if tunnel_id in pids and is_pid_running(pids[tunnel_id].get('pid')):
+        log_message("INFO", f"Tunnel {tunnel_id} is already running.")
+        return {"success": True, "message": "Tunnel already running."}
+
+    if tunnel_type == "Ngrok":
+        if not is_command_available("ngrok"):
+            raise Exception("`ngrok` command not found. Please install it to use tunnels.")
+        # Start ngrok process in the background
+        process = subprocess.Popen(['ngrok', 'tcp', str(local_port), '--log=stdout'],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, preexec_fn=os.setsid)
+        # Give it a moment to start up and get the URL
+        run_command(['sleep', '2'], timeout=5)
+        try:
+            api_output = run_command(['curl', '-s', 'http://127.0.0.1:4040/api/tunnels'])
+            api_data = json.loads(api_output)
+            tunnel_info = next((t for t in api_data.get('tunnels', []) if t.get('proto') == 'tcp' and str(t.get('config', {}).get('addr')).endswith(str(local_port))), None)
+            if not tunnel_info:
+                process.terminate()
+                raise Exception("Could not find started ngrok tunnel in ngrok API.")
+            url = tunnel_info.get('public_url')
+        except Exception as e:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            raise e
+
+    elif tunnel_type == "Cloudflare":
+        if not is_command_available("cloudflared"):
+            raise Exception("`cloudflared` command not found. Please install it to use tunnels.")
+        if not cloudflare_id:
+            raise Exception("Cloudflare Tunnel ID is required.")
+        
+        # The URL is the Tunnel ID itself for Cloudflare
+        url = f"{cloudflare_id}.trycloudflare.com"
+
+        # Force connection to the Singapore region for better performance in Asia
+        command = ['cloudflared', 'tunnel', 'run', '--url', f'tcp://localhost:{local_port}', '--region', 'sin', cloudflare_id]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, preexec_fn=os.setsid)
+        run_command(['sleep', '2'], timeout=5) # Let it initialize
+        
+    else:
+        raise Exception(f"Unknown tunnel type: {tunnel_type}")
+
+    pids[tunnel_id] = {
+        "pid": process.pid,
+        "port": local_port,
+        "url": url,
+        "type": tunnel_type,
+        "linkedTo": linked_to
+    }
+    save_tunnel_pids(pids)
+    log_message("INFO", f"Started {tunnel_type} tunnel {tunnel_id} for port {local_port} with PID {process.pid}. URL: {url}")
+    return {"success": True, "data": pids[tunnel_id]}
+
+
+def stop_tunnel(tunnel_id):
+    """Stops a tunnel using its saved PID."""
+    pids = get_tunnel_pids()
+    tunnel_info = pids.get(tunnel_id)
+    if not tunnel_info or not is_pid_running(tunnel_info.get('pid')):
+        log_message("INFO", f"Tunnel {tunnel_id} is not running or not found.")
+        if tunnel_id in pids:
+            del pids[tunnel_id]
+            save_tunnel_pids(pids)
+        return {"success": True, "message": "Tunnel was not running."}
+
+    pid = tunnel_info.get('pid')
+    try:
+        # Use killpg to kill the entire process group, ensuring cloudflared and its children are terminated
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        log_message("INFO", f"Stopped tunnel {tunnel_id} with PID {pid}.")
+    except OSError as e:
+        log_message("WARN", f"Could not kill tunnel process group {pid} for {tunnel_id}: {e}. It may have already exited.")
+    
+    del pids[tunnel_id]
+    save_tunnel_pids(pids)
+    return {"success": True, "message": "Tunnel stopped."}
+
+def get_all_tunnel_statuses():
+    """Gets the status of all managed tunnels."""
+    pids = get_tunnel_pids()
+    statuses = []
+    pids_changed = False
+    
+    for tunnel_id, info in list(pids.items()):
+        if is_pid_running(info.get('pid')):
+            statuses.append({
+                "id": tunnel_id,
+                "type": info.get("type", "Unknown"),
+                "status": "active",
+                "url": info.get("url"),
+                "localPort": info.get("port"),
+                "linkedTo": info.get("linkedTo")
+            })
+        else:
+            log_message("INFO", f"Tunnel {tunnel_id} with PID {info.get('pid')} is no longer running. Cleaning up.")
+            del pids[tunnel_id]
+            pids_changed = True
+    
+    if pids_changed:
+        save_tunnel_pids(pids)
+        
+    return {"success": True, "data": statuses}
+
+def get_available_cloudflare_tunnels():
+    """Detects available Cloudflare tunnels by looking for cert.pem files."""
+    if not is_command_available("cloudflared"):
+        return {"success": True, "data": []}
+        
+    cf_dir = Path(os.path.expanduser("~")) / ".cloudflared"
+    tunnels = []
+    if cf_dir.exists():
+        for cert_file in cf_dir.glob("*.pem"):
+            # The filename of the cert file is the Tunnel UUID
+            tunnel_id = cert_file.stem
+            tunnels.append({"id": tunnel_id, "name": f"Cloudflare Tunnel ({tunnel_id[:8]}...)"})
+    
+    return {"success": True, "data": tunnels}
+
+# --- System & Config Functions ---
 def get_logs():
     """Reads the last N lines from the log file."""
     try:
@@ -475,6 +658,33 @@ def get_all_configs():
         log_message("ERROR", f"Failed to read proxy configs file: {e}")
         return {"success": False, "error": f"Failed to read proxy configs file: {e}"}
 
+def update_proxy_config(interface_name, updates_json):
+    """Updates config for an interface and restarts the proxy if running."""
+    try:
+        updates = json.loads(updates_json)
+        all_configs = read_state_file(PROXY_CONFIGS_FILE)
+        
+        if interface_name not in all_configs:
+            all_configs[interface_name] = {}
+            
+        is_credential_update = 'username' in updates or 'password' in updates
+        
+        for key, value in updates.items():
+            all_configs[interface_name][key] = value
+            
+        write_state_file(PROXY_CONFIGS_FILE, all_configs)
+        log_message("INFO", f"Updated config for {interface_name} with: {updates}")
+        
+        # If credentials were changed, restart the proxy to apply them
+        if is_credential_update and get_proxy_status(interface_name) == 'running':
+            log_message("INFO", f"Credentials changed for {interface_name}. Restarting proxy to apply.")
+            proxy_action('restart', interface_name)
+
+        return {"success": True, "data": all_configs[interface_name]}
+    except Exception as e:
+        log_message("ERROR", f"Failed to update config for {interface_name}: {e}")
+        return {"success": False, "error": str(e)}
+
 # --- Main Execution Block ---
 
 def main():
@@ -495,10 +705,25 @@ def main():
             result = proxy_action(action, sys.argv[2])
         elif action in ['send-sms', 'read-sms', 'send-ussd']:
             result = modem_action(action, sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else '{}')
+        elif action == 'start_tunnel':
+            tunnel_id = sys.argv[2]
+            local_port = int(sys.argv[3])
+            linked_to = sys.argv[4]
+            tunnel_type = sys.argv[5]
+            cloudflare_id = sys.argv[6] if len(sys.argv) > 6 else None
+            result = start_tunnel(tunnel_id, local_port, linked_to, tunnel_type, cloudflare_id)
+        elif action == 'stop_tunnel':
+            result = stop_tunnel(sys.argv[2])
+        elif action == 'get_all_tunnel_statuses':
+            result = get_all_tunnel_statuses()
+        elif action == 'get_available_cloudflare_tunnels':
+            result = get_available_cloudflare_tunnels()
         elif action == 'get_logs':
             result = get_logs()
         elif action == 'get_all_configs':
             result = get_all_configs()
+        elif action == 'update_proxy_config':
+            result = update_proxy_config(sys.argv[2], sys.argv[3])
         else:
             result = {"success": False, "error": f"Unknown action: {action}"}
     
@@ -510,5 +735,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    

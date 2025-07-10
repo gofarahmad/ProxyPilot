@@ -114,7 +114,7 @@ export default function ProxyListPage() {
     <>
       <PageHeader
         title="Authenticated Proxy List"
-        description="List of currently active and authenticated proxies ready for use."
+        description="List of currently active proxies that have been configured with a username and password."
         actions={
           <Button onClick={fetchAndFormatProxies} disabled={isLoading} variant="outline">
             <ListChecks className="mr-2 h-4 w-4" />
@@ -132,20 +132,20 @@ export default function ProxyListPage() {
           <CardHeader>
             <CardTitle className="flex items-center">
               <Info className="mr-2 h-6 w-6 text-blue-500" />
-              No Active Proxies Available
+              No Authenticated Proxies Available
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground">
-              There are currently no proxies that are both connected and running with valid credentials.
+              There are currently no proxies that are both running and configured with a username and password.
             </p>
             <p className="text-muted-foreground mt-2">
               To see proxies here, please ensure:
             </p>
             <ul className="list-disc list-inside text-muted-foreground mt-1 space-y-1">
-              <li>A modem is connected and shows a 'connected' status on the "Modem Status" page.</li>
-              <li>The proxy server for that modem is 'running' on the "Proxy Control" page.</li>
-              <li>The backend has successfully generated credentials for the proxy.</li>
+              <li>A modem is 'connected' on the "Modem Status" page.</li>
+              <li>The proxy server is 'running' on the "Proxy Control" page.</li>
+              <li>You have set a username and password for the proxy on the "Proxy Control" page.</li>
             </ul>
           </CardContent>
         </Card>
@@ -207,8 +207,8 @@ export default function ProxyListPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-accent-foreground/90 space-y-1">
-            <p>This list shows proxies that are reported as 'connected' and 'running'. Credentials are automatically generated and managed by the backend.</p>
-            <p>Usability depends on the correct configuration of your 3proxy service on the host system. Ensure the `backend_controller.py` has permission to write configs.</p>
+            <p>This page only lists proxies that are running and have been assigned a username and password from the "Proxy Control" page.</p>
+            <p>Proxies running in "Open (No Auth)" mode will not appear here as they do not have credentials to list.</p>
           </CardContent>
         </Card>
     </>

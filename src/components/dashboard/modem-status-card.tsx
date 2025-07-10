@@ -5,23 +5,27 @@ import type { ModemStatus } from '@/services/network-service';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Wifi, WifiOff, AlertCircle, Power, RefreshCw, ShieldCheck, ShieldOff, Loader2 } from 'lucide-react';
+import { Wifi, WifiOff, AlertCircle, Power, RefreshCw, ShieldCheck, ShieldOff, Loader2, Pencil, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { rotateIp, getModemStatus as fetchModemStatus } from '@/services/network-service';
 import { startProxy, stopProxy, restartProxy } from '@/services/proxy-service';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
 
 interface ModemStatusCardProps {
   initialModem: ModemStatus;
-  onModemUpdate?: (modem: ModemStatus) => void;
+  onNameUpdate: (interfaceName: string, newName: string) => void;
 }
 
-export function ModemStatusCard({ initialModem, onModemUpdate }: ModemStatusCardProps) {
+export function ModemStatusCard({ initialModem, onNameUpdate }: ModemStatusCardProps) {
   const [modem, setModem] = useState<ModemStatus>(initialModem);
   const [isLoading, setIsLoading] = useState(false);
   const [isProxyLoading, setIsProxyLoading] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editingName, setEditingName] = useState(initialModem.name);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const refreshStatus = useCallback(async () => {
@@ -29,28 +33,45 @@ export function ModemStatusCard({ initialModem, onModemUpdate }: ModemStatusCard
     try {
       const updatedStatus = await fetchModemStatus(modem.interfaceName);
       setModem(updatedStatus);
-      if(onModemUpdate) onModemUpdate(updatedStatus);
+      // If the name was updated on the server by another process, reflect it
+      if (updatedStatus.name !== editingName && !isEditingName) {
+        setEditingName(updatedStatus.name);
+      }
     } catch (error) {
       toast({ title: 'Error', description: `Failed to refresh status for ${modem.name}`, variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
-  }, [modem.interfaceName, modem.name, toast, onModemUpdate]);
+  }, [modem.interfaceName, modem.name, toast, editingName, isEditingName]);
   
   useEffect(() => {
-    // When initialModem changes (e.g. parent page refreshed), update local state
     setModem(initialModem);
+    setEditingName(initialModem.name);
   }, [initialModem]);
 
+  useEffect(() => {
+    if (isEditingName && nameInputRef.current) {
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [isEditingName]);
+
+  const handleNameEditSubmit = () => {
+    if (editingName.trim() && editingName !== modem.name) {
+      onNameUpdate(modem.interfaceName, editingName.trim());
+    }
+    setIsEditingName(false);
+  };
 
   const handleRotateIp = async () => {
     setIsLoading(true);
     try {
       await rotateIp(modem.interfaceName);
       toast({ title: 'IP Rotated', description: `IP for ${modem.name} has been rotated and proxy restarted.` });
-      await refreshStatus(); // Refresh full status after rotation
+      await refreshStatus(); 
     } catch (error) {
-      toast({ title: 'Error Rotating IP', description: String(error), variant: 'destructive' });
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      toast({ title: 'Error Rotating IP', description: errorMessage, variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -66,26 +87,68 @@ export function ModemStatusCard({ initialModem, onModemUpdate }: ModemStatusCard
       else if (action === 'restart') success = await restartProxy(modem.interfaceName);
       
       toast({ title: `Proxy ${action}`, description: `${modem.proxyType} on ${modem.name} ${success ? action + 'ed' : 'failed to ' + action}.` });
-      await refreshStatus(); // Refresh to get updated proxy status
+      await refreshStatus(); 
     } catch (error) {
-       toast({ title: `Error ${action}ing Proxy`, description: String(error), variant: 'destructive' });
+       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+       toast({ title: `Error ${action}ing Proxy`, description: errorMessage, variant: 'destructive' });
     } finally {
       setIsProxyLoading(false);
     }
   };
   
-
   if (!modem) return <Skeleton className="h-[280px] w-full" />;
 
   const isConnected = modem.status === 'connected';
   const Icon = isConnected ? Wifi : modem.status === 'disconnected' ? WifiOff : AlertCircle;
 
+  const renderBandwidth = () => {
+    if (!modem.bandwidth || modem.bandwidth.error) {
+        return <p className="text-xs text-muted-foreground">Bandwidth data unavailable.</p>;
+    }
+    return (
+        <>
+            <div className="flex items-center justify-between text-sm">
+                <span className="font-medium flex items-center gap-1"><ArrowDownCircle className="h-4 w-4 text-green-500" />Total RX:</span>
+                <span>{modem.bandwidth.totalRx || 'N/A'}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+                <span className="font-medium flex items-center gap-1"><ArrowUpCircle className="h-4 w-4 text-blue-500"/>Total TX:</span>
+                <span>{modem.bandwidth.totalTx || 'N/A'}</span>
+            </div>
+        </>
+    );
+};
+
   return (
     <Card className="shadow-md hover:shadow-lg transition-shadow flex flex-col">
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-xl">{modem.name}</CardTitle>
-          <Icon className={cn('h-6 w-6', isConnected ? 'text-green-500' : 'text-red-500')} />
+        <div className="flex items-start justify-between">
+          {isEditingName ? (
+            <Input
+              ref={nameInputRef}
+              value={editingName}
+              onChange={(e) => setEditingName(e.target.value)}
+              onBlur={handleNameEditSubmit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleNameEditSubmit();
+                if (e.key === 'Escape') {
+                  setEditingName(modem.name);
+                  setIsEditingName(false);
+                }
+              }}
+              className="text-xl font-semibold p-0 h-auto border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+          ) : (
+            <CardTitle 
+              className="text-xl flex items-center gap-2 cursor-pointer group"
+              onClick={() => setIsEditingName(true)}
+              title="Click to edit name"
+            >
+              {modem.name}
+              <Pencil className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+            </CardTitle>
+          )}
+          <Icon className={cn('h-6 w-6 shrink-0 ml-2', isConnected ? 'text-green-500' : 'text-red-500')} />
         </div>
         <CardDescription>{modem.interfaceName}</CardDescription>
       </CardHeader>
@@ -99,9 +162,10 @@ export function ModemStatusCard({ initialModem, onModemUpdate }: ModemStatusCard
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">IP Address:</span>
-              <span className="text-sm">{modem.ipAddress || 'N/A'}</span>
+              <span className="text-sm font-mono">{modem.ipAddress || 'N/A'}</span>
             </div>
-            <div className="flex items-center justify-between">
+            {renderBandwidth()}
+            <div className="flex items-center justify-between pt-2">
               <span className="text-sm font-medium">Proxy ({modem.proxyType || 'N/A'}):</span>
               {modem.proxyType && (
                 <Badge variant={modem.proxyStatus === 'running' ? 'default' : 'secondary'} 
@@ -142,5 +206,3 @@ export function ModemStatusCard({ initialModem, onModemUpdate }: ModemStatusCard
     </Card>
   );
 }
-
-    

@@ -5,7 +5,7 @@ import React from 'react';
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RotateCcw, RefreshCw, Loader2, Wifi, Settings2, TimerIcon } from 'lucide-react';
+import { RotateCcw, RefreshCw, Loader2, Wifi, Settings2, TimerIcon, AlertTriangle } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -92,13 +92,13 @@ export default function IpRotationPage() {
   }, [toast]);
   
   const handleRotateAll = useCallback(async () => {
-    const connectedModems = modems.filter(m => m.status === 'connected');
+    const connectedModems = modems.filter(m => m.status === 'connected' && m.source === 'mmcli_enhanced');
     if (connectedModems.length === 0) {
-      toast({ title: "Rotation Skipped", description: "No connected modems to rotate.", variant: "default" });
+      toast({ title: "Rotation Skipped", description: "No connected modems managed by ModemManager to rotate.", variant: "default" });
       return;
     }
 
-    toast({ title: "Mass IP Rotation Started", description: "Attempting to rotate IPs for all connected modems." });
+    toast({ title: "Mass IP Rotation Started", description: `Attempting to rotate IPs for ${connectedModems.length} supported modem(s).` });
     setModems(prev => prev.map(m => connectedModems.find(cm => cm.interfaceName === m.interfaceName) ? { ...m, rotating: true } : m));
     
     const rotationPromises = connectedModems
@@ -131,7 +131,7 @@ export default function IpRotationPage() {
         delete modemTimersRef.current[timerKey];
       }
 
-      if (modem.autoRotateEnabled && modem.autoRotateIntervalMinutes > 0 && modem.status === 'connected') {
+      if (modem.autoRotateEnabled && modem.autoRotateIntervalMinutes > 0 && modem.status === 'connected' && modem.source === 'mmcli_enhanced') {
         const intervalMs = modem.autoRotateIntervalMinutes * 60 * 1000;
         
         // Initialize countdown if it's not set
@@ -204,6 +204,8 @@ export default function IpRotationPage() {
     }));
   };
   
+  const isRotationSupported = (modem: RotatableModem) => modem.source === 'mmcli_enhanced';
+
   return (
     <>
       <PageHeader
@@ -215,9 +217,9 @@ export default function IpRotationPage() {
               <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
               Refresh List
             </Button>
-            <Button onClick={handleRotateAll} disabled={isLoading || modems.every(m => m.status !== 'connected')}>
+            <Button onClick={handleRotateAll} disabled={isLoading || modems.every(m => m.status !== 'connected' || !isRotationSupported(m))}>
               <RotateCcw className="mr-2 h-4 w-4" />
-              Rotate All Connected
+              Rotate All Supported
             </Button>
           </>
         }
@@ -225,7 +227,7 @@ export default function IpRotationPage() {
 
       {isLoading && modems.length === 0 ? (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-[380px] w-full rounded-lg" />)}
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-[420px] w-full rounded-lg" />)}
         </div>
       ) : modems.length === 0 && !isLoading ? (
          <div className="text-center py-10">
@@ -236,11 +238,11 @@ export default function IpRotationPage() {
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
           {modems.map((modem) => (
-            <Card key={modem.interfaceName} className="shadow-md flex flex-col">
+            <Card key={modem.interfaceName} className={`shadow-md flex flex-col ${!isRotationSupported(modem) ? 'bg-muted/30' : ''}`}>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg">{modem.name}</CardTitle>
-                  <RotateCcw className="h-5 w-5 text-primary" />
+                  <RotateCcw className={`h-5 w-5 ${isRotationSupported(modem) ? 'text-primary' : 'text-muted-foreground'}`} />
                 </div>
                 <CardDescription>Interface: {modem.interfaceName}</CardDescription>
               </CardHeader>
@@ -248,12 +250,20 @@ export default function IpRotationPage() {
                 <p className="text-sm">Current IP: <span className="font-semibold">{modem.ipAddress || 'N/A'}</span></p>
                 <p className="text-xs text-muted-foreground">Status: {modem.status}</p>
                 {modem.lastRotated && <p className="text-xs text-muted-foreground">Last Rotated: {new Date(modem.lastRotated).toLocaleString()}</p>}
+                
+                {!isRotationSupported(modem) && (
+                  <div className="p-2 text-xs text-center bg-yellow-400/20 text-yellow-700 rounded-md flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    IP Rotation requires the modem to be managed by ModemManager.
+                  </div>
+                )}
+                
                 <Button 
                   onClick={() => handleRotateIp(modem.interfaceName, false)} 
-                  disabled={modem.rotating || modem.status !== 'connected' || isLoading}
+                  disabled={modem.rotating || modem.status !== 'connected' || isLoading || !isRotationSupported(modem)}
                   className="w-full"
                   variant="outline"
-                  title={modem.status !== 'connected' ? 'Modem not connected' : (modem.rotating ? 'Rotation in progress' : 'Rotate IP Manually')}
+                  title={!isRotationSupported(modem) ? 'Modem not managed by ModemManager' : (modem.status !== 'connected' ? 'Modem not connected' : (modem.rotating ? 'Rotation in progress' : 'Rotate IP Manually'))}
                 >
                   {modem.rotating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
                   Rotate IP Manually
@@ -263,18 +273,18 @@ export default function IpRotationPage() {
 
                 <div className="space-y-3 pt-2">
                     <div className="flex items-center justify-between">
-                        <Label htmlFor={`auto-rotate-${modem.interfaceName}`} className="text-base font-medium flex items-center">
+                        <Label htmlFor={`auto-rotate-${modem.interfaceName}`} className={`text-base font-medium flex items-center ${!isRotationSupported(modem) ? 'text-muted-foreground' : ''}`}>
                             <TimerIcon className="mr-2 h-5 w-5 text-muted-foreground"/> Auto Rotate this Modem
                         </Label>
                         <Switch
                             id={`auto-rotate-${modem.interfaceName}`}
                             checked={modem.autoRotateEnabled}
                             onCheckedChange={(checked) => handleTogglePerModemAutoRotate(modem.interfaceName, checked)}
-                            disabled={modem.status !== 'connected'}
+                            disabled={modem.status !== 'connected' || !isRotationSupported(modem)}
                             aria-label={`Toggle automatic IP rotation for ${modem.name}`}
                         />
                     </div>
-                    {modem.autoRotateEnabled && (
+                    {modem.autoRotateEnabled && isRotationSupported(modem) && (
                     <div className="pl-2 space-y-2">
                         <div>
                             <Label htmlFor={`interval-${modem.interfaceName}`} className="text-xs text-muted-foreground">Interval (minutes)</Label>

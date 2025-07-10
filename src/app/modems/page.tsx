@@ -3,7 +3,7 @@
 
 import { PageHeader } from '@/components/page-header';
 import { ModemStatusCard } from '@/components/dashboard/modem-status-card';
-import { getAllModemStatuses, ModemStatus as ModemStatusType } from '@/services/network-service';
+import { getAllModemStatuses, ModemStatus as ModemStatusType, updateProxyConfig } from '@/services/network-service';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Wifi, AlertTriangle, Loader2 } from 'lucide-react';
@@ -30,12 +30,11 @@ export default function ModemStatusPage() {
         toast({ title: "Refreshing...", description: "Fetching latest modem statuses." });
     }
 
-    // Set a timeout to show a message if loading takes too long
     timeoutRef.current = setTimeout(() => {
         if (isLoading) {
             setShowTimeoutMessage(true);
         }
-    }, 10000); // 10 seconds
+    }, 10000); 
 
     try {
       const data = await getAllModemStatuses();
@@ -57,17 +56,35 @@ export default function ModemStatusPage() {
 
   useEffect(() => {
     fetchModems(false);
-    // Cleanup timeout on unmount
     return () => {
         if(timeoutRef.current) clearTimeout(timeoutRef.current);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const updateModemInState = (updatedModem: ModemStatusType) => {
-    setModems(currentModems =>
-      currentModems.map(m => (m.id === updatedModem.id ? updatedModem : m))
+  const handleNameUpdate = async (interfaceName: string, newName: string) => {
+    const originalModems = [...modems];
+    
+    // Optimistic UI update
+    setModems(prevModems =>
+      prevModems.map(m => (m.interfaceName === interfaceName ? { ...m, name: newName } : m))
     );
+
+    try {
+      await updateProxyConfig(interfaceName, { customName: newName });
+      toast({
+        title: "Name Updated",
+        description: `Modem ${interfaceName} is now named "${newName}".`,
+      });
+    } catch (error) {
+      // Revert on error
+      setModems(originalModems);
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      toast({
+        title: "Update Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
   };
 
   const renderContent = () => {
@@ -109,7 +126,7 @@ export default function ModemStatusPage() {
     return (
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {modems.map((modem) => (
-          <ModemStatusCard key={modem.id} initialModem={modem} onModemUpdate={updateModemInState} />
+          <ModemStatusCard key={modem.id} initialModem={modem} onNameUpdate={handleNameUpdate} />
         ))}
       </div>
     );
@@ -119,7 +136,7 @@ export default function ModemStatusPage() {
     <>
       <PageHeader
         title="Modem Status"
-        description="Monitor the status and IP addresses of your USB modems."
+        description="Monitor the status and IP addresses of your USB modems. Click the modem name to edit it."
         actions={
           <Button onClick={() => fetchModems(true)} disabled={isLoading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />

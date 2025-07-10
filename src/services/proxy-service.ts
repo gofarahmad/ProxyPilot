@@ -4,11 +4,10 @@
 import { PythonShell } from 'python-shell';
 import path from 'path';
 
-// This helper function runs the Python script and returns the parsed JSON output.
 async function runPythonScript(args: string[]): Promise<any> {
   const options = {
     mode: 'text' as const,
-    pythonPath: 'python3', // Assumes python3 is in the system's PATH
+    pythonPath: 'python3',
     scriptPath: path.join(process.cwd(), 'src', 'services'),
     args: args,
   };
@@ -17,7 +16,7 @@ async function runPythonScript(args: string[]): Promise<any> {
     const results = await PythonShell.run('backend_controller.py', options);
     const result = JSON.parse(results[0]);
     if (!result.success) {
-      throw new Error(result.error || 'The Python script reported an unkown execution error.');
+      throw new Error(result.error || 'The Python script reported an unknown execution error.');
     }
     return result.data;
   } catch (error) {
@@ -29,8 +28,6 @@ async function runPythonScript(args: string[]): Promise<any> {
   }
 }
 
-
-// This function is used by the AI flow
 export async function rebindProxy(interfaceName: string, newIp: string): Promise<boolean> {
   console.log(`[Service] Rebinding proxy on ${interfaceName} to ${newIp}. Restarting service.`);
   await restartProxy(interfaceName);
@@ -58,6 +55,7 @@ export interface ProxyConfig {
     type: '3proxy';
     username?: string;
     password?: string;
+    customName?: string | null;
 }
 
 export async function getProxyConfig(interfaceName: string): Promise<ProxyConfig | null> {
@@ -65,7 +63,9 @@ export async function getProxyConfig(interfaceName: string): Promise<ProxyConfig
     return allConfigs[interfaceName] || null;
 }
 
-export async function updateProxyConfig(interfaceName: string, config: Partial<Omit<ProxyConfig, 'type'>>): Promise<boolean> {
-    await runPythonScript(['update_config', interfaceName, JSON.stringify(config)]);
+export async function updateProxyCredentials(interfaceName: string, username?: string, password?: string): Promise<boolean> {
+    const credentials = { username, password };
+    await runPythonScript(['update_proxy_config', interfaceName, JSON.stringify(credentials)]);
+    // The Python script will automatically restart the proxy after updating credentials
     return true;
 }

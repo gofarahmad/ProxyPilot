@@ -3,12 +3,12 @@
 
 import { PythonShell } from 'python-shell';
 import path from 'path';
+import { ProxyConfig } from './proxy-service';
 
-// This helper function runs the Python script and returns the parsed JSON output.
 async function runPythonScript(args: string[]): Promise<any> {
   const options = {
     mode: 'text' as const,
-    pythonPath: 'python3', // Assumes python3 is in the system's PATH
+    pythonPath: 'python3', 
     scriptPath: path.join(process.cwd(), 'src', 'services'),
     args: args,
   };
@@ -17,7 +17,7 @@ async function runPythonScript(args: string[]): Promise<any> {
     const results = await PythonShell.run('backend_controller.py', options);
     const result = JSON.parse(results[0]);
     if (!result.success) {
-      throw new Error(result.error || 'The Python script reported an unkown execution error.');
+      throw new Error(result.error || 'The Python script reported an unknown execution error.');
     }
     return result.data;
   } catch (error) {
@@ -29,8 +29,6 @@ async function runPythonScript(args: string[]): Promise<any> {
   }
 }
 
-
-// This function is used by the AI flow
 export async function getCurrentIpAddress(interfaceName: string): Promise<string> {
   console.log(`[Service] getCurrentIpAddress called for ${interfaceName}`);
   const allStatuses = await getAllModemStatuses();
@@ -46,6 +44,12 @@ export interface ModemStatus {
   ipAddress: string | null;
   proxyType: '3proxy';
   proxyStatus: 'running' | 'stopped' | 'error';
+  source: 'ip_addr' | 'mmcli_enhanced';
+  bandwidth: {
+    totalRx: string | null;
+    totalTx: string | null;
+    error?: string;
+  }
 }
 
 
@@ -62,13 +66,12 @@ export async function getAllModemStatuses(): Promise<ModemStatus[]> {
     return await runPythonScript(['get_all_modem_statuses']);
 }
 
-/**
- * Rotates the IP for a given interface by reconnecting the modem.
- * This now also handles restarting the associated proxy service.
- * @param interfaceName The network interface of the modem (e.g., 'ppp0').
- * @returns The new IP address assigned to the modem.
- */
 export async function rotateIp(interfaceName: string): Promise<string> {
     const result = await runPythonScript(['rotate_ip', interfaceName]);
     return result.newIp;
+}
+
+export async function updateProxyConfig(interfaceName: string, config: Partial<Pick<ProxyConfig, 'customName'>>): Promise<boolean> {
+    await runPythonScript(['update_proxy_config', interfaceName, JSON.stringify(config)]);
+    return true;
 }

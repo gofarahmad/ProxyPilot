@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Loader2, Info } from 'lucide-react';
+import { RefreshCw, Loader2, Info, Waypoints } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { getAllTunnelStatuses, TunnelStatus } from '@/services/tunnel-service';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -50,7 +50,7 @@ export function TunnelTable() {
       <div className="flex justify-end mb-4">
         <Button onClick={fetchTunnels} disabled={isLoading} variant="outline" size="sm">
           <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh
+          Refresh List
         </Button>
       </div>
       <div className="rounded-md border">
@@ -61,6 +61,7 @@ export function TunnelTable() {
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Public URL</TableHead>
+              <TableHead>Linked To</TableHead>
               <TableHead className="text-right">Local Port</TableHead>
             </TableRow>
           </TableHeader>
@@ -72,6 +73,7 @@ export function TunnelTable() {
                   <TableCell><Skeleton className="h-5 w-16" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-48" /></TableCell>
+                   <TableCell><Skeleton className="h-5 w-20" /></TableCell>
                   <TableCell className="text-right"><Skeleton className="h-5 w-12 ml-auto" /></TableCell>
                 </TableRow>
               ))
@@ -79,15 +81,21 @@ export function TunnelTable() {
               tunnels.map((tunnel) => (
                 <TableRow key={tunnel.id}>
                   <TableCell className="font-mono text-xs">{tunnel.id}</TableCell>
-                  <TableCell>{tunnel.type}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="flex items-center gap-1 w-fit">
+                        <Waypoints className="h-3 w-3" />
+                        {tunnel.type}
+                    </Badge>
+                  </TableCell>
                   <TableCell>{renderStatusBadge(tunnel.status)}</TableCell>
                   <TableCell className="font-mono text-xs">{tunnel.url || 'N/A'}</TableCell>
+                  <TableCell>{tunnel.linkedTo || 'N/A'}</TableCell>
                   <TableCell className="text-right">{tunnel.localPort}</TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
+                <TableCell colSpan={6} className="h-24 text-center">
                   <Info className="mx-auto h-6 w-6 text-muted-foreground mb-2" />
                   No active tunnels found.
                 </TableCell>

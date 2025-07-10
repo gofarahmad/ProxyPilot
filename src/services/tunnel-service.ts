@@ -1,7 +1,34 @@
 
 'use server';
 
-// This service now simulates a real-world tunnel provider that is managed by the backend.
+import { PythonShell } from 'python-shell';
+import path from 'path';
+
+// Helper function to run the Python backend script
+async function runPythonScript(args: string[]): Promise<any> {
+  const options = {
+    mode: 'text' as const,
+    pythonPath: 'python3',
+    scriptPath: path.join(process.cwd(), 'src', 'services'),
+    args: args,
+  };
+
+  try {
+    const results = await PythonShell.run('backend_controller.py', options);
+    const result = JSON.parse(results[0]);
+    if (!result.success) {
+      throw new Error(result.error || 'The Python script reported an unknown execution error.');
+    }
+    return result.data;
+  } catch (error) {
+    console.error('PythonShell Error:', error);
+    if (error instanceof Error) {
+      throw new Error(`Backend script failed: ${error.message}`);
+    }
+    throw new Error('An unknown error occurred while executing the backend script.');
+  }
+}
+
 
 export interface TunnelStatus {
   id: string; // e.g., 'tunnel_ppp0'
@@ -9,61 +36,70 @@ export interface TunnelStatus {
   status: 'active' | 'inactive' | 'error';
   url: string | null;
   localPort: number; // The local proxy port it's connected to
+  linkedTo: string | null; // Name of the modem/proxy it is linked to
 }
 
-// In-memory store to simulate tunnel states. In a real app, this would be managed by a process manager.
-let tunnelData: Record<string, TunnelStatus> = {};
-
-export async function getTunnelStatus(tunnelId: string): Promise<TunnelStatus | null> {
-  await new Promise(resolve => setTimeout(resolve, 150)); // Simulate network latency
-  return tunnelData[tunnelId] || null;
+export interface CloudflareTunnel {
+  id: string; // The UUID of the tunnel
+  name: string; // A display-friendly name
 }
 
-export async function getAllTunnelStatuses(): Promise<TunnelStatus[]> {
-    await new Promise(resolve => setTimeout(resolve, 150));
-    return Object.values(tunnelData);
+export async function getAvailableCloudflareTunnels(): Promise<CloudflareTunnel[]> {
+  return await runPythonScript(['get_available_cloudflare_tunnels']);
 }
 
 /**
- * Starts a tunnel for a specific local port.
- * In a real backend, this would execute `ngrok tcp <localPort>` or a similar command.
+ * Retrieves the status of a single tunnel by its ID.
+ * Note: This is less efficient than getting all statuses at once.
+ * It's implemented by filtering the full list from the backend.
+ * @param tunnelId The ID of the tunnel.
+ * @returns A promise resolving to the tunnel's status or null if not found.
+ */
+export async function getTunnelStatus(tunnelId: string): Promise<TunnelStatus | null> {
+  const allTunnels = await getAllTunnelStatuses();
+  return allTunnels.find(t => t.id === tunnelId) || null;
+}
+
+/**
+ * Fetches the statuses of all active tunnels from the backend.
+ * @returns A promise resolving to an array of active tunnel statuses.
+ */
+export async function getAllTunnelStatuses(): Promise<TunnelStatus[]> {
+    return await runPythonScript(['get_all_tunnel_statuses']);
+}
+
+/**
+ * Starts a tunnel for a specific local port by calling the backend script.
  * @param tunnelId A unique identifier for the tunnel, e.g., `tunnel_ppp0`
  * @param localPort The local port the tunnel should expose.
+ * @param linkedTo The name of the modem this tunnel is for.
+ * @param tunnelType The provider to use ('Ngrok' or 'Cloudflare').
+ * @param cloudflareId The ID of the Cloudflare tunnel (only for 'Cloudflare' type).
  * @returns A promise resolving to true if successful.
  */
-export async function startTunnel(tunnelId: string, localPort: number): Promise<boolean> {
-  console.log(`[Service] Simulating start of tunnel ${tunnelId} for port ${localPort}`);
-  await new Promise(resolve => setTimeout(resolve, 1200)); // Simulate time to establish connection
-
-  // For this simulation, we'll default to Ngrok
-  const type = 'Ngrok';
-  tunnelData[tunnelId] = {
-    id: tunnelId,
-    type: type,
-    status: 'active',
-    url: `tcp://2.tcp.ngrok.io:${Math.floor(10000 + Math.random() * 9000)}`, // Simulate dynamic Ngrok URL
-    localPort: localPort,
-  };
+export async function startTunnel(
+  tunnelId: string, 
+  localPort: number, 
+  linkedTo: string, 
+  tunnelType: 'Ngrok' | 'Cloudflare',
+  cloudflareId?: string
+): Promise<boolean> {
+  const args = ['start_tunnel', tunnelId, String(localPort), linkedTo, tunnelType];
+  if (tunnelType === 'Cloudflare' && cloudflareId) {
+    args.push(cloudflareId);
+  }
+  await runPythonScript(args);
   return true;
 }
 
 /**
- * Stops a tunnel.
- * In a real backend, this would find and kill the corresponding Ngrok process.
+ * Stops a tunnel by calling the backend script.
  * @param tunnelId The ID of the tunnel to stop.
  * @returns A promise resolving to true if successful.
  */
 export async function stopTunnel(tunnelId: string): Promise<boolean> {
-  console.log(`[Service] Simulating stop of tunnel ${tunnelId}`);
-  await new Promise(resolve => setTimeout(resolve, 500));
-  if (tunnelData[tunnelId]) {
-    delete tunnelData[tunnelId];
-    return true;
-  }
-  // If it doesn't exist, it's already "stopped", so we can return true.
+  await runPythonScript(['stop_tunnel', tunnelId]);
   return true;
 }
 
-// NOTE: add, update, and delete are removed as tunnel management is now
-// implicitly handled by the start/stop actions on the Proxy Control page.
-// Tunnels are ephemeral and tied to a running proxy instance.
+    

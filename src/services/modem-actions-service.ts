@@ -6,7 +6,7 @@ import path from 'path';
 // This helper function runs the Python script and returns the parsed JSON output.
 async function runPythonScript(args: string[]): Promise<any> {
   const options = {
-    mode: 'text' as const, // Use text mode to get the raw JSON string
+    mode: 'text' as const,
     pythonPath: 'python3', // Assumes python3 is in the system's PATH
     scriptPath: path.join(process.cwd(), 'src', 'services'),
     args: args,
@@ -14,14 +14,17 @@ async function runPythonScript(args: string[]): Promise<any> {
 
   try {
     const results = await PythonShell.run('backend_controller.py', options);
-    const result = JSON.parse(results[0]); // Manually parse the JSON output
+    // The result from Python is a JSON string in the first element of the array.
+    const result = JSON.parse(results[0]); 
     if (!result.success) {
-      throw new Error(result.error || 'The Python script reported an execution error.');
+      // If the script reported an error, throw it so it can be caught by the caller.
+      throw new Error(result.error || 'The Python script reported an unkown execution error.');
     }
-    return result; // Return the full result object which includes the 'data' or other keys
+    // On success, return the 'data' part of the result.
+    return result.data; 
   } catch (error) {
     console.error('PythonShell Error:', error);
-    // Propagate a user-friendly error message
+    // Re-throw the error to be handled by the calling server action.
     if (error instanceof Error) {
         throw new Error(`Backend script failed: ${error.message}`);
     }
@@ -46,8 +49,8 @@ export interface SmsMessage {
  */
 export async function sendSms(interfaceName: string, recipient: string, message: string): Promise<{ success: boolean; message: string }> {
     const args = { recipient, message };
-    const result = await runPythonScript(['send-sms', interfaceName, JSON.stringify(args)]);
-    return { success: result.success, message: result.message };
+    const data = await runPythonScript(['send-sms', interfaceName, JSON.stringify(args)]);
+    return { success: true, message: data.message };
 }
 
 /**
@@ -56,8 +59,8 @@ export async function sendSms(interfaceName: string, recipient: string, message:
  * @returns A promise that resolves to an array of SMS messages.
  */
 export async function readSms(interfaceName: string): Promise<SmsMessage[]> {
-    const result = await runPythonScript(['read-sms', interfaceName, '{}']);
-    return result.data;
+    const data = await runPythonScript(['read-sms', interfaceName, '{}']);
+    return data;
 }
 
 /**
@@ -68,8 +71,6 @@ export async function readSms(interfaceName: string): Promise<SmsMessage[]> {
  */
 export async function sendUssd(interfaceName: string, ussdCode: string): Promise<{ success: boolean; response: string }> {
     const args = { ussdCode };
-    const result = await runPythonScript(['send-ussd', interfaceName, JSON.stringify(args)]);
-    return { success: result.success, response: result.response };
+    const data = await runPythonScript(['send-ussd', interfaceName, JSON.stringify(args)]);
+    return { success: true, response: data.response };
 }
-
-    

@@ -43,9 +43,9 @@ export default function ModemStatusPage() {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       console.error("Failed to fetch modem statuses:", errorMessage);
-      setError("Could not retrieve modem data from the server. Please ensure the backend service is running and ModemManager is active on your host system.");
+      setError(errorMessage);
       setModems([]); 
-      toast({ title: "Error", description: "Could not fetch modem statuses.", variant: "destructive" });
+      toast({ title: "Error Fetching Modems", description: errorMessage, variant: "destructive" });
     } finally {
       setIsLoading(false);
       if (timeoutRef.current) {
@@ -61,6 +61,7 @@ export default function ModemStatusPage() {
     return () => {
         if(timeoutRef.current) clearTimeout(timeoutRef.current);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const updateModemInState = (updatedModem: ModemStatusType) => {
@@ -70,7 +71,7 @@ export default function ModemStatusPage() {
   };
 
   const renderContent = () => {
-    if (isLoading && modems.length === 0) {
+    if (isLoading && modems.length === 0 && !error) {
       return (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map(i => <Skeleton key={i} className="h-[420px] w-full rounded-lg" />)}

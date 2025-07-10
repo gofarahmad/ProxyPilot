@@ -7,7 +7,7 @@ import path from 'path';
 // This helper function runs the Python script and returns the parsed JSON output.
 async function runPythonScript(args: string[]): Promise<any> {
   const options = {
-    mode: 'json' as const,
+    mode: 'text' as const,
     pythonPath: 'python3', // Assumes python3 is in the system's PATH
     scriptPath: path.join(process.cwd(), 'src', 'services'),
     args: args,
@@ -15,17 +15,13 @@ async function runPythonScript(args: string[]): Promise<any> {
 
   try {
     const results = await PythonShell.run('backend_controller.py', options);
-    // python-shell returns an array of results, we expect one JSON object.
-    const result = results[0];
+    const result = JSON.parse(results[0]);
     if (!result.success) {
-      // If the script itself reported an error, throw it.
-      throw new Error(result.error || 'The Python script reported an execution error.');
+      throw new Error(result.error || 'The Python script reported an unkown execution error.');
     }
     return result.data;
   } catch (error) {
     console.error('PythonShell Error:', error);
-    // Rethrow the error to be caught by the calling function.
-    // This makes sure that errors from the script are propagated to the UI.
     if (error instanceof Error) {
         throw new Error(`Backend script failed: ${error.message}`);
     }
@@ -39,8 +35,6 @@ export async function getCurrentIpAddress(interfaceName: string): Promise<string
   console.log(`[Service] getCurrentIpAddress called for ${interfaceName}`);
   const allStatuses = await getAllModemStatuses();
   const modem = allStatuses.find(m => m.interfaceName === interfaceName);
-  // In a real scenario, you'd want to handle the case where the modem is not found
-  // or has no IP address. For AI, providing a fallback is reasonable.
   return modem?.ipAddress || '127.0.0.1'; // Default fallback
 }
 
@@ -76,6 +70,5 @@ export async function getAllModemStatuses(): Promise<ModemStatus[]> {
  */
 export async function rotateIp(interfaceName: string): Promise<string> {
     const result = await runPythonScript(['rotate_ip', interfaceName]);
-    // The python script now returns the new IP in the result object
     return result.newIp;
 }

@@ -2,7 +2,7 @@
 
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { LayoutDashboard, Wifi, Network, RotateCcw, Zap, BarChart3, ShieldAlert, ListChecks, Smartphone, Settings } from 'lucide-react';
+import { LayoutDashboard, Wifi, Network, RotateCcw, Zap, BarChart3, ListChecks, Smartphone, Settings } from 'lucide-react';
 import Link from 'next/link';
 
 const overviewCards = [
@@ -14,8 +14,7 @@ const overviewCards = [
   { title: 'IP Rotation', description: 'Otomatiskan penggantian IP.', icon: RotateCcw, href: '/ip-rotation', color: 'text-orange-500' },
   { title: 'Auto Proxy Rebind', description: 'Deteksi IP & rebind dengan AI.', icon: Zap, href: '/auto-rebind', color: 'text-yellow-500' },
   { title: 'System Logs', description: 'Lihat log aktivitas dan error.', icon: BarChart3, href: '/logs', color: 'text-gray-500' },
-  { title: 'Security Alerts', description: 'Periksa potensi ancaman.', icon: ShieldAlert, href: '/security', color: 'text-red-500' },
-  { title: 'Settings', description: 'Konfigurasi sistem & firewall.', icon: Settings, href: '/settings', color: 'text-slate-500' },
+  { title: 'Settings', description: 'Konfigurasi global & tunnels.', icon: Settings, href: '/settings', color: 'text-purple-500' },
 ];
 
 export default function DashboardPage() {

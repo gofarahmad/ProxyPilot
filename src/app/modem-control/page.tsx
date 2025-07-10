@@ -41,6 +41,9 @@ export default function ModemControlPage() {
             setModems(connectedModems);
             if (connectedModems.length > 0 && !selectedInterface) {
                 setSelectedInterface(connectedModems[0].interfaceName);
+            } else if (connectedModems.length > 0 && !connectedModems.some(m => m.interfaceName === selectedInterface)) {
+                // if the selected modem is no longer available, select the first one
+                setSelectedInterface(connectedModems[0].interfaceName);
             } else if (connectedModems.length === 0) {
                 setSelectedInterface('');
             }
@@ -53,7 +56,8 @@ export default function ModemControlPage() {
 
     useEffect(() => {
         fetchModems();
-    }, [fetchModems]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleReadSms = useCallback(async () => {
         if (!selectedInterface) return;
@@ -65,7 +69,7 @@ export default function ModemControlPage() {
                 toast({ title: 'No New Messages', description: `No SMS found on ${selectedInterface}.` });
             }
         } catch (error) {
-            toast({ title: 'Error', description: 'Failed to read SMS messages.', variant: 'destructive' });
+            toast({ title: 'Error Reading SMS', description: String(error), variant: 'destructive' });
         } finally {
             setIsReadingSms(false);
         }
@@ -74,9 +78,12 @@ export default function ModemControlPage() {
     // Auto-read SMS when interface changes
     useEffect(() => {
         if(selectedInterface){
+            setReceivedSms([]);
+            setUssdResponse('');
             handleReadSms();
         }
-    }, [selectedInterface, handleReadSms]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedInterface]);
 
 
     const handleSendSms = async (e: React.FormEvent) => {

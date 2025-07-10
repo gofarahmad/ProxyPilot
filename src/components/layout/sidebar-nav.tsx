@@ -19,7 +19,6 @@ const navItems = [
 
 const secondaryNavItems = [
     { href: '/logs', label: 'System Logs', icon: BarChart3 },
-    { href: '/security', label: 'Security', icon: ShieldAlert },
     { href: '/settings', label: 'Settings', icon: Settings },
 ];
 

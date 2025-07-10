@@ -67,5 +67,3 @@ export async function stopTunnel(tunnelId: string): Promise<boolean> {
 // NOTE: add, update, and delete are removed as tunnel management is now
 // implicitly handled by the start/stop actions on the Proxy Control page.
 // Tunnels are ephemeral and tied to a running proxy instance.
-
-    

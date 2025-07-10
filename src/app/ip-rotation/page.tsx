@@ -65,15 +65,6 @@ export default function IpRotationPage() {
   }, []);
 
   const handleRotateIp = useCallback(async (interfaceName: string, isAutoRotate: boolean = false) => {
-    const modemToRotate = modems.find(m => m.interfaceName === interfaceName);
-    
-    if (!modemToRotate || modemToRotate.status !== 'connected') {
-      if (!isAutoRotate) {
-        toast({ title: `Rotation Skipped for ${modemToRotate?.name || interfaceName}`, description: "Modem not connected.", variant: "destructive" });
-      }
-      return;
-    }
-
     setModems(prev => prev.map(m => m.interfaceName === interfaceName ? { ...m, rotating: true } : m));
     
     try {
@@ -85,21 +76,20 @@ export default function IpRotationPage() {
       
       setModems(prev => {
         const modemInState = prev.find(m => m.interfaceName === interfaceName);
-        if (isAutoRotate && modemInState?.autoRotateEnabled) {
-          setModemAutoRotateCountdowns(countdownPrev => ({
-             ...countdownPrev,
-             [interfaceName]: modemInState.autoRotateIntervalMinutes * 60,
-          }));
-        }
-        return prev.map(m => m.interfaceName === interfaceName ? { ...m, ipAddress: newIp, status: 'connected', lastRotated: new Date() } : m);
+        // This part needs to access the latest state, which can be tricky in closures.
+        // We'll reset the countdown via the main `useEffect` for modems.
+        return prev.map(m => 
+            m.interfaceName === interfaceName 
+            ? { ...m, ipAddress: newIp, status: 'connected', lastRotated: new Date(), rotating: false } 
+            : m
+        );
       });
 
     } catch (error) {
       toast({ title: `Error ${isAutoRotate ? 'Auto-' : ''}Rotating IP for ${interfaceName}`, description: String(error), variant: 'destructive' });
-    } finally {
        setModems(prev => prev.map(m => m.interfaceName === interfaceName ? { ...m, rotating: false } : m));
     }
-  }, [modems, toast]);
+  }, [toast]);
   
   const handleRotateAll = useCallback(async () => {
     const connectedModems = modems.filter(m => m.status === 'connected');
@@ -138,6 +128,7 @@ export default function IpRotationPage() {
       if (modemTimersRef.current[timerKey]) {
         clearInterval(modemTimersRef.current[timerKey].rotationTimer);
         clearInterval(modemTimersRef.current[timerKey].countdownTimer);
+        delete modemTimersRef.current[timerKey];
       }
 
       if (modem.autoRotateEnabled && modem.autoRotateIntervalMinutes > 0 && modem.status === 'connected') {
@@ -153,7 +144,11 @@ export default function IpRotationPage() {
         const countdownTimer = setInterval(() => {
           setModemAutoRotateCountdowns(prev => {
             const currentCountdown = prev[timerKey] || 0;
-            return { ...prev, [timerKey]: Math.max(0, currentCountdown - 1) };
+            if (currentCountdown <= 1) { // When it hits 0, reset based on modem state
+                 const currentModem = modems.find(m => m.interfaceName === timerKey);
+                 return { ...prev, [timerKey]: (currentModem?.autoRotateIntervalMinutes || 0) * 60 };
+            }
+            return { ...prev, [timerKey]: currentCountdown - 1 };
           });
         }, 1000);
 
@@ -169,8 +164,16 @@ export default function IpRotationPage() {
          }
       }
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modems, handleRotateIp]);
+
+    // Cleanup function for useEffect
+    return () => {
+        Object.values(modemTimersRef.current).forEach(timers => {
+            if(timers.rotationTimer) clearInterval(timers.rotationTimer);
+            if(timers.countdownTimer) clearInterval(timers.countdownTimer);
+        });
+    }
+
+  }, [modems, handleRotateIp, modemAutoRotateCountdowns]);
 
   const handleTogglePerModemAutoRotate = (interfaceName: string, enabled: boolean) => {
     setModems(prevModems => prevModems.map(m => {
@@ -244,7 +247,7 @@ export default function IpRotationPage() {
               <CardContent className="space-y-3 flex-grow">
                 <p className="text-sm">Current IP: <span className="font-semibold">{modem.ipAddress || 'N/A'}</span></p>
                 <p className="text-xs text-muted-foreground">Status: {modem.status}</p>
-                {modem.lastRotated && <p className="text-xs text-muted-foreground">Last Rotated: {modem.lastRotated.toLocaleString()}</p>}
+                {modem.lastRotated && <p className="text-xs text-muted-foreground">Last Rotated: {new Date(modem.lastRotated).toLocaleString()}</p>}
                 <Button 
                   onClick={() => handleRotateIp(modem.interfaceName, false)} 
                   disabled={modem.rotating || modem.status !== 'connected' || isLoading}
@@ -305,5 +308,3 @@ export default function IpRotationPage() {
     </>
   );
 }
-
-    

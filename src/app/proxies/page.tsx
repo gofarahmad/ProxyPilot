@@ -152,7 +152,7 @@ export default function ProxyControlPage() {
 
       toast({
         title: `Proxy ${action} ${success ? 'Succeeded' : 'Failed'}`,
-        description: `3proxy on ${interfaceName} ${success ? 'was ' + action + 'ed.' : 'failed to ' + action + '.'}`,
+        description: `Proxy on ${interfaceName} ${success ? 'was ' + action + 'ed.' : 'failed to ' + action + '.'}`,
         variant: success ? 'default' : 'destructive',
       });
       await new Promise(resolve => setTimeout(resolve, 1500)); // Wait a moment for service to update
@@ -229,7 +229,7 @@ export default function ProxyControlPage() {
             <Card key={proxy.interfaceName} className="shadow-md flex flex-col">
                 <CardHeader>
                     <div className="flex items-center justify-between">
-                        <CardTitle className="text-lg">3proxy on {proxy.name}</CardTitle>
+                        <CardTitle className="text-lg">Proxy on {proxy.name}</CardTitle>
                         <Network className="h-5 w-5 text-primary" />
                     </div>
                     <CardDescription>IF: {proxy.interfaceName} | IP: {proxy.ipAddress || 'N/A'} | Port: {proxy.config?.port || 'N/A'}</CardDescription>

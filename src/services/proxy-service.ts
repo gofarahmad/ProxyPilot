@@ -63,6 +63,10 @@ export async function getProxyConfig(interfaceName: string): Promise<ProxyConfig
     return allConfigs[interfaceName] || null;
 }
 
+export async function getAllProxyConfigs(): Promise<Record<string, ProxyConfig>> {
+    return await runPythonScript(['get_all_configs']);
+}
+
 export async function updateProxyCredentials(interfaceName: string, username?: string, password?: string): Promise<boolean> {
     const credentials = { username, password };
     await runPythonScript(['update_proxy_config', interfaceName, JSON.stringify(credentials)]);

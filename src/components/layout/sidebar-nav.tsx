@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
-import { LayoutDashboard, Settings, Wifi, RotateCcw, Zap, Network, ListChecks, Smartphone, BarChart3, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, Settings, Wifi, RotateCcw, Network, ListChecks, Smartphone, BarChart3, AreaChart, BookText } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -14,12 +14,13 @@ const navItems = [
   { href: '/proxies', label: 'Proxy Control', icon: Network },
   { href: '/modem-control', label: 'Modem Control', icon: Smartphone },
   { href: '/ip-rotation', label: 'IP Rotation', icon: RotateCcw },
-  { href: '/auto-rebind', label: 'Auto Rebind', icon: Zap },
 ];
 
 const secondaryNavItems = [
+    { href: '/network-stats', label: 'Network Stats', icon: AreaChart },
     { href: '/logs', label: 'System Logs', icon: BarChart3 },
     { href: '/settings', label: 'Settings', icon: Settings },
+    { href: '/documentation', label: 'Documentation', icon: BookText },
 ];
 
 export function SidebarNav() {

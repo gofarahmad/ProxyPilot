@@ -2,19 +2,20 @@
 
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { LayoutDashboard, Wifi, Network, RotateCcw, Zap, BarChart3, ListChecks, Smartphone, Settings } from 'lucide-react';
+import { LayoutDashboard, Wifi, Network, RotateCcw, Smartphone, BarChart3, ListChecks, Settings, AreaChart, BookText } from 'lucide-react';
 import Link from 'next/link';
 
 const overviewCards = [
   { title: 'Dashboard', description: 'Tinjauan umum sistem Anda.', icon: LayoutDashboard, href: '/', color: 'text-indigo-500' },
   { title: 'Proxy List', description: 'Lihat proxy yang aktif dan dapat digunakan.', icon: ListChecks, href: '/proxy-list', color: 'text-teal-500' },
   { title: 'Modem Status', description: 'Monitor koneksi & IP modem.', icon: Wifi, href: '/modems', color: 'text-blue-500' },
-  { title: 'Proxy Control', description: 'Kelola server 3proxy & tunnels.', icon: Network, href: '/proxies', color: 'text-green-500' },
+  { title: 'Proxy Control', description: 'Kelola server proxy & tunnels.', icon: Network, href: '/proxies', color: 'text-green-500' },
   { title: 'Modem Control', description: 'Kirim SMS dan perintah USSD.', icon: Smartphone, href: '/modem-control', color: 'text-cyan-500' },
   { title: 'IP Rotation', description: 'Otomatiskan penggantian IP.', icon: RotateCcw, href: '/ip-rotation', color: 'text-orange-500' },
-  { title: 'Auto Proxy Rebind', description: 'Deteksi IP & rebind dengan AI.', icon: Zap, href: '/auto-rebind', color: 'text-yellow-500' },
+  { title: 'Network Stats', description: 'Lihat statistik penggunaan data.', icon: AreaChart, href: '/network-stats', color: 'text-pink-500' },
   { title: 'System Logs', description: 'Lihat log aktivitas dan error.', icon: BarChart3, href: '/logs', color: 'text-gray-500' },
   { title: 'Settings', description: 'Konfigurasi global & tunnels.', icon: Settings, href: '/settings', color: 'text-purple-500' },
+  { title: 'Documentation', description: 'Panduan dan cara penggunaan.', icon: BookText, href: '/documentation', color: 'text-yellow-600' },
 ];
 
 export default function DashboardPage() {

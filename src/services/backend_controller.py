@@ -634,6 +634,47 @@ def get_available_cloudflare_tunnels():
     
     return {"success": True, "data": tunnels}
 
+# --- vnstat Functions ---
+def get_vnstat_interfaces():
+    """Gets a list of all interfaces monitored by vnstat."""
+    if not is_command_available("vnstat"):
+        raise Exception("`vnstat` is not installed. Please install it to view network statistics.")
+    try:
+        output = run_command(['vnstat', '--iflist'])
+        # The output is a simple space-separated list.
+        return {"success": True, "data": output.split()}
+    except Exception as e:
+        log_message("ERROR", f"Failed to get vnstat interface list: {e}")
+        return {"success": False, "error": str(e)}
+
+def get_vnstat_stats(interface_name):
+    """Gets daily, monthly, and hourly stats for a specific interface."""
+    if not is_command_available("vnstat"):
+        raise Exception("`vnstat` is not installed. Please install it to view network statistics.")
+    try:
+        # Use -j for JSON output which is much easier to parse reliably.
+        daily_data = run_and_parse_json(['vnstat', '-i', interface_name, '-d', '-j'])
+        monthly_data = run_and_parse_json(['vnstat', '-i', interface_name, '-m', '-j'])
+        hourly_data = run_and_parse_json(['vnstat', '-i', interface_name, '-h', '-j'])
+        
+        # Combine the relevant parts of the JSON output into a single response.
+        interface_stats = daily_data['interfaces'][0] # Also contains total rx/tx
+        
+        # Note: vnstat JSON output provides traffic in KiB.
+        combined_stats = {
+            "name": interface_stats.get('name', interface_name),
+            "totalrx": interface_stats.get('traffic', {}).get('total', {}).get('rx', 0),
+            "totaltx": interface_stats.get('traffic', {}).get('total', {}).get('tx', 0),
+            "day": interface_stats.get('traffic', {}).get('day', []),
+            "month": monthly_data['interfaces'][0].get('traffic', {}).get('month', []),
+            "hour": hourly_data['interfaces'][0].get('traffic', {}).get('hour', [])
+        }
+        
+        return {"success": True, "data": combined_stats}
+    except Exception as e:
+        log_message("ERROR", f"Failed to get vnstat stats for {interface_name}: {e}")
+        return {"success": False, "error": str(e)}
+
 # --- System & Config Functions ---
 def get_logs():
     """Reads the last N lines from the log file."""
@@ -718,6 +759,10 @@ def main():
             result = get_all_tunnel_statuses()
         elif action == 'get_available_cloudflare_tunnels':
             result = get_available_cloudflare_tunnels()
+        elif action == 'get_vnstat_interfaces':
+            result = get_vnstat_interfaces()
+        elif action == 'get_vnstat_stats':
+            result = get_vnstat_stats(sys.argv[2])
         elif action == 'get_logs':
             result = get_logs()
         elif action == 'get_all_configs':
@@ -728,10 +773,12 @@ def main():
             result = {"success": False, "error": f"Unknown action: {action}"}
     
     except Exception as e:
+        log_message("ERROR", f"An unexpected error occurred in main for action '{action}': {e}")
         result = {"success": False, "error": f"An unexpected error occurred in main: {str(e)}"}
-        log_message("ERROR", f"Unexpected error in main for action '{action}': {e}")
 
     print(json.dumps(result))
 
 if __name__ == "__main__":
     main()
+
+    

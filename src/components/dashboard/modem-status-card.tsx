@@ -5,11 +5,10 @@ import type { ModemStatus } from '@/services/network-service';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Wifi, WifiOff, AlertCircle, Power, RefreshCw, ShieldCheck, ShieldOff, Loader2, Pencil, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { Wifi, WifiOff, AlertCircle, RefreshCw, Loader2, Pencil, ArrowDownCircle, ArrowUpCircle, Power } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { rotateIp, getModemStatus as fetchModemStatus } from '@/services/network-service';
-import { startProxy, stopProxy, restartProxy } from '@/services/proxy-service';
+import { getModemStatus as fetchModemStatus } from '@/services/network-service';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
@@ -22,7 +21,6 @@ interface ModemStatusCardProps {
 export function ModemStatusCard({ initialModem, onNameUpdate }: ModemStatusCardProps) {
   const [modem, setModem] = useState<ModemStatus>(initialModem);
   const [isLoading, setIsLoading] = useState(false);
-  const [isProxyLoading, setIsProxyLoading] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingName, setEditingName] = useState(initialModem.name);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -33,7 +31,6 @@ export function ModemStatusCard({ initialModem, onNameUpdate }: ModemStatusCardP
     try {
       const updatedStatus = await fetchModemStatus(modem.interfaceName);
       setModem(updatedStatus);
-      // If the name was updated on the server by another process, reflect it
       if (updatedStatus.name !== editingName && !isEditingName) {
         setEditingName(updatedStatus.name);
       }
@@ -61,39 +58,6 @@ export function ModemStatusCard({ initialModem, onNameUpdate }: ModemStatusCardP
       onNameUpdate(modem.interfaceName, editingName.trim());
     }
     setIsEditingName(false);
-  };
-
-  const handleRotateIp = async () => {
-    setIsLoading(true);
-    try {
-      await rotateIp(modem.interfaceName);
-      toast({ title: 'IP Rotated', description: `IP for ${modem.name} has been rotated and proxy restarted.` });
-      await refreshStatus(); 
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      toast({ title: 'Error Rotating IP', description: errorMessage, variant: 'destructive' });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleProxyAction = async (action: 'start' | 'stop' | 'restart') => {
-    if (!modem.proxyType) return;
-    setIsProxyLoading(true);
-    try {
-      let success = false;
-      if (action === 'start') success = await startProxy(modem.interfaceName);
-      else if (action === 'stop') success = await stopProxy(modem.interfaceName);
-      else if (action === 'restart') success = await restartProxy(modem.interfaceName);
-      
-      toast({ title: `Proxy ${action}`, description: `${modem.proxyType} on ${modem.name} ${success ? action + 'ed' : 'failed to ' + action}.` });
-      await refreshStatus(); 
-    } catch (error) {
-       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-       toast({ title: `Error ${action}ing Proxy`, description: errorMessage, variant: 'destructive' });
-    } finally {
-      setIsProxyLoading(false);
-    }
   };
   
   if (!modem) return <Skeleton className="h-[280px] w-full" />;
@@ -170,6 +134,7 @@ export function ModemStatusCard({ initialModem, onNameUpdate }: ModemStatusCardP
               {modem.proxyType && (
                 <Badge variant={modem.proxyStatus === 'running' ? 'default' : 'secondary'} 
                        className={cn(modem.proxyStatus === 'running' ? 'bg-blue-500/20 text-blue-700 border-blue-500' : 'bg-gray-500/20 text-gray-700 border-gray-500')}>
+                  <Power className="mr-1 h-3 w-3" />
                   {modem.proxyStatus}
                 </Badge>
               )}
@@ -179,28 +144,10 @@ export function ModemStatusCard({ initialModem, onNameUpdate }: ModemStatusCardP
         <div className="flex-grow"></div>
 
         <div className="space-y-2 pt-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Button onClick={handleRotateIp} disabled={isLoading || !isConnected} size="sm" variant="outline">
-                 {isLoading && !isProxyLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                 Rotate IP
-              </Button>
-              <Button onClick={refreshStatus} disabled={isLoading} size="sm" variant="outline">
-                <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-              </Button>
-            </div>
-            {modem.proxyType && (
-              <div className="grid grid-cols-3 gap-2 pt-2">
-                <Button onClick={() => handleProxyAction('start')} disabled={isProxyLoading || modem.proxyStatus === 'running' || !isConnected} size="sm" variant="ghost" className="text-green-600 hover:text-green-700 hover:bg-green-100">
-                  {isProxyLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Power className="mr-1 h-4 w-4" />} Start
-                </Button>
-                <Button onClick={() => handleProxyAction('stop')} disabled={isProxyLoading || modem.proxyStatus === 'stopped'} size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-100">
-                  {isProxyLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldOff className="mr-1 h-4 w-4" />} Stop
-                </Button>
-                <Button onClick={() => handleProxyAction('restart')} disabled={isProxyLoading || !isConnected} size="sm" variant="ghost" className="text-blue-600 hover:text-blue-700 hover:bg-blue-100">
-                  {isProxyLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />} Restart
-                </Button>
-              </div>
-            )}
+            <Button onClick={refreshStatus} disabled={isLoading} size="sm" variant="outline" className="w-full">
+              {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+               Refresh Status
+            </Button>
         </div>
       </CardContent>
     </Card>
